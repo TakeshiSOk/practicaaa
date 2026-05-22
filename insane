@@ -1,0 +1,770 @@
+const {
+  Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+  HeadingLevel, AlignmentType, BorderStyle, WidthType, ShadingType,
+  LevelFormat, PageBreak
+} = require('docx');
+const fs = require('fs');
+
+// ─── helpers ────────────────────────────────────────────────
+const border  = { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" };
+const borders = { top: border, bottom: border, left: border, right: border };
+const hBorder = { style: BorderStyle.SINGLE, size: 1, color: "1A5276" };
+const hBorders= { top: hBorder, bottom: hBorder, left: hBorder, right: hBorder };
+
+const FONT = "Arial";
+const C1   = "1A5276"; // dark blue
+const C2   = "2E86C1"; // mid blue
+const GRAY = "F2F3F4";
+const WARN = "F39C12";
+const OK   = "1E8449";
+
+function h1(t) {
+  return new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    spacing: { before: 360, after: 180 },
+    children: [new TextRun({ text: t, bold: true, size: 34, font: FONT, color: C1 })]
+  });
+}
+function h2(t) {
+  return new Paragraph({
+    heading: HeadingLevel.HEADING_2,
+    spacing: { before: 260, after: 120 },
+    children: [new TextRun({ text: t, bold: true, size: 26, font: FONT, color: C2 })]
+  });
+}
+function h3(t) {
+  return new Paragraph({
+    spacing: { before: 180, after: 80 },
+    children: [new TextRun({ text: t, bold: true, size: 22, font: FONT, color: C2 })]
+  });
+}
+function p(...runs) {
+  const children = runs.map(r =>
+    typeof r === "string"
+      ? new TextRun({ text: r, size: 22, font: FONT })
+      : new TextRun({ text: r.t, bold: !!r.b, size: 22, font: FONT })
+  );
+  return new Paragraph({ spacing: { before: 60, after: 60 }, children });
+}
+function tip(t) {
+  return new Paragraph({
+    spacing: { before: 100, after: 100 },
+    indent: { left: 360 },
+    border: { left: { style: BorderStyle.SINGLE, size: 8, color: WARN, space: 10 } },
+    children: [new TextRun({ text: "⚠  " + t, size: 21, font: FONT, color: "7D6608" })]
+  });
+}
+function ok(t) {
+  return new Paragraph({
+    spacing: { before: 100, after: 100 },
+    indent: { left: 360 },
+    border: { left: { style: BorderStyle.SINGLE, size: 8, color: OK, space: 10 } },
+    children: [new TextRun({ text: "✓  " + t, size: 21, font: FONT, color: "145A32" })]
+  });
+}
+function bullet(t, bold) {
+  return new Paragraph({
+    numbering: { reference: "bul", level: 0 },
+    spacing: { before: 40, after: 40 },
+    children: bold
+      ? [new TextRun({ text: bold, bold: true, size: 22, font: FONT }),
+         new TextRun({ text: t, size: 22, font: FONT })]
+      : [new TextRun({ text: t, size: 22, font: FONT })]
+  });
+}
+function num(t, bold) {
+  return new Paragraph({
+    numbering: { reference: "num", level: 0 },
+    spacing: { before: 50, after: 50 },
+    children: bold
+      ? [new TextRun({ text: bold, bold: true, size: 22, font: FONT }),
+         new TextRun({ text: t, size: 22, font: FONT })]
+      : [new TextRun({ text: t, size: 22, font: FONT })]
+  });
+}
+function code(line) {
+  return new Paragraph({
+    spacing: { before: 40, after: 40 },
+    indent: { left: 360 },
+    shading: { fill: "EBF5FB", type: ShadingType.CLEAR },
+    children: [new TextRun({ text: line, font: "Courier New", size: 19, color: "1A2E40" })]
+  });
+}
+function codes(...lines) { return lines.map(l => code(l)); }
+function sp() { return new Paragraph({ spacing: { before: 60, after: 60 }, children: [new TextRun("")] }); }
+function pb() { return new Paragraph({ children: [new PageBreak()] }); }
+
+function table(headers, rows, widths) {
+  const total = widths.reduce((a,b)=>a+b,0);
+  return new Table({
+    width: { size: total, type: WidthType.DXA },
+    columnWidths: widths,
+    rows: [
+      new TableRow({
+        tableHeader: true,
+        children: headers.map((h,i) => new TableCell({
+          borders: hBorders,
+          width: { size: widths[i], type: WidthType.DXA },
+          shading: { fill: "1A5276", type: ShadingType.CLEAR },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 20, font: FONT, color: "FFFFFF" })] })]
+        }))
+      }),
+      ...rows.map((row, ri) => new TableRow({
+        children: row.map((cell, i) => new TableCell({
+          borders,
+          width: { size: widths[i], type: WidthType.DXA },
+          shading: { fill: ri%2===0 ? "EBF5FB" : "FFFFFF", type: ShadingType.CLEAR },
+          margins: { top: 80, bottom: 80, left: 120, right: 120 },
+          children: [new Paragraph({ children: [new TextRun({ text: cell, size: 20, font: FONT })] })]
+        }))
+      }))
+    ]
+  });
+}
+
+// ─── document ───────────────────────────────────────────────
+const doc = new Document({
+  numbering: {
+    config: [
+      { reference: "bul", levels: [{ level: 0, format: LevelFormat.BULLET, text: "•", alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } } }] },
+      { reference: "num", levels: [{ level: 0, format: LevelFormat.DECIMAL, text: "%1.", alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } } }] },
+    ]
+  },
+  styles: {
+    default: { document: { run: { font: FONT, size: 22 } } },
+    paragraphStyles: [
+      { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 34, bold: true, font: FONT, color: C1 },
+        paragraph: { spacing: { before: 360, after: 180 }, outlineLevel: 0 } },
+      { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 26, bold: true, font: FONT, color: C2 },
+        paragraph: { spacing: { before: 260, after: 120 }, outlineLevel: 1 } },
+    ]
+  },
+  sections: [{
+    properties: {
+      page: {
+        size: { width: 12240, height: 15840 },
+        margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+      }
+    },
+    children: [
+
+      // ══════════════════════════════════════════
+      // PORTADA
+      // ══════════════════════════════════════════
+      new Paragraph({ spacing: { before: 2000 }, children: [] }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 120 },
+        children: [new TextRun({ text: "Tutorial Completo de Laravel", bold: true, size: 56, font: FONT, color: C1 })]
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 120, after: 80 },
+        children: [new TextRun({ text: "Desde el modelo hasta Postman", size: 30, font: FONT, color: C2 })]
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 80, after: 0 },
+        children: [new TextRun({ text: "Guía práctica con errores comunes y cómo evitarlos", size: 24, font: FONT, color: "777777", italics: true })]
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 600 },
+        children: [new TextRun({ text: "SENA  ·  Desarrollo de Software  ·  2026", size: 22, font: FONT, color: "999999" })]
+      }),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // INTRODUCCIÓN
+      // ══════════════════════════════════════════
+      h1("¿Qué vamos a aprender?"),
+      p("Este tutorial te guía paso a paso para construir un proyecto en Laravel con PostgreSQL, desde leer el modelo hasta probarlo en Postman. Está escrito con los errores reales que se cometen al aprender, para que no los repitas."),
+      sp(),
+      p("El flujo completo que seguiremos siempre es:"),
+      sp(),
+      num("Leer el modelo y definir el orden de tablas"),
+      num("Crear el proyecto Laravel"),
+      num("Configurar la base de datos en .env y pgAdmin"),
+      num("Crear modelos y migraciones"),
+      num("Llenar las migraciones con las columnas"),
+      num("Renombrar los archivos para asegurar el orden"),
+      num("Ejecutar las migraciones"),
+      num("Agregar relaciones en los modelos"),
+      num("Agregar Scopes en los modelos"),
+      num("Crear controladores"),
+      num("Activar y registrar rutas de API"),
+      num("Crear y ejecutar Seeders"),
+      num("Probar en Postman"),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 1
+      // ══════════════════════════════════════════
+      h1("Paso 1 — Leer el modelo"),
+      p("Antes de escribir código, analiza el modelo entidad-relación. Por cada tabla hazte estas preguntas:"),
+      sp(),
+      bullet("¿Qué representa en la vida real?"),
+      bullet("¿Tiene columnas FK? ¿A qué tabla apuntan?"),
+      bullet("¿Hay tablas intermedias (muchos a muchos)?"),
+      sp(),
+      h2("Definir el orden de las tablas"),
+      p("El orden es crítico. Las tablas con FK deben crearse después de las tablas a las que apuntan."),
+      sp(),
+      table(
+        ["Tipo de tabla", "Cuándo crearla", "Ejemplo"],
+        [
+          ["Sin FK (tabla padre)", "Primera", "faculties, students"],
+          ["Con FK (tabla hijo)", "Después de su padre", "courses (tiene faculty_id)"],
+          ["Tabla intermedia", "Última, siempre", "course_material, enrollments"],
+        ],
+        [2800, 3400, 3160]
+      ),
+      sp(),
+      tip("El error más frecuente es crear la tabla intermedia antes que alguna de las tablas a las que referencia. PostgreSQL lanzará error de 'relación no existe'."),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 2
+      // ══════════════════════════════════════════
+      h1("Paso 2 — Crear el proyecto Laravel"),
+      h2("Comando para crear el proyecto"),
+      ...codes(
+        "composer create-project laravel/laravel nombre-del-proyecto",
+        "cd nombre-del-proyecto",
+        "php artisan serve",
+      ),
+      sp(),
+      tip("El nombre NO puede tener espacios. Usa guiones: sistema-hospital, no sistema hospital."),
+      tip("Si aparece error de 'vendor/autoload.php not found', ejecuta: composer install"),
+      sp(),
+
+      h2("Configurar la base de datos (.env)"),
+      p("Abre el archivo ", {t:".env", b:true}, " en la raíz del proyecto y ajusta estos valores:"),
+      sp(),
+      ...codes(
+        "DB_CONNECTION=pgsql",
+        "DB_HOST=127.0.0.1",
+        "DB_PORT=5432",
+        "DB_DATABASE=nombre_de_tu_bd",
+        "DB_USERNAME=postgres",
+        "DB_PASSWORD=tu_contraseña",
+      ),
+      sp(),
+      p("Luego crea la base de datos en pgAdmin:"),
+      num("Clic derecho en Databases"),
+      num("Create → Database"),
+      num("Ponle el mismo nombre que pusiste en DB_DATABASE"),
+      num("Guardar"),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 3
+      // ══════════════════════════════════════════
+      h1("Paso 3 — Crear modelos y migraciones"),
+      h2("El comando más eficiente"),
+      p("Este comando crea el modelo y la migración al mismo tiempo con el flag ", {t:"-m", b:true}, ":"),
+      sp(),
+      ...codes("php artisan make:model NombreModelo -m"),
+      sp(),
+      p("Repítelo por cada tabla. Usa ", {t:"PascalCase", b:true}, " (primera letra de cada palabra en mayúscula):"),
+      sp(),
+      table(
+        ["Tabla en BD", "Nombre del modelo", "Comando"],
+        [
+          ["faculties",       "Faculty",       "php artisan make:model Faculty -m"],
+          ["teachers",        "Teacher",       "php artisan make:model Teacher -m"],
+          ["students",        "Student",       "php artisan make:model Student -m"],
+          ["courses",         "Course",        "php artisan make:model Course -m"],
+          ["enrollments",     "Enrollment",    "php artisan make:model Enrollment -m"],
+          ["course_material", "CourseMaterial","php artisan make:model CourseMaterial -m"],
+        ],
+        [2400, 2400, 4560]
+      ),
+      sp(),
+      tip("Si ya creaste las migraciones y solo necesitas el modelo, omite -m: php artisan make:model NombreModelo"),
+      tip("Los modelos deben estar en PascalCase. 'teacher.php' con minúscula va contra las convenciones de Laravel y puede causar errores inesperados."),
+      sp(),
+
+      h2("Renombrar los archivos de migración"),
+      p("Laravel ejecuta las migraciones en orden alfabético. Si varias tienen la misma fecha, el orden es impredecible. Renómbralas con números secuenciales:"),
+      sp(),
+      ...codes(
+        "2026_01_01_000001_create_faculties_table.php",
+        "2026_01_01_000002_create_students_table.php",
+        "2026_01_01_000003_create_teachers_table.php",
+        "2026_01_01_000004_create_courses_table.php",
+        "2026_01_01_000005_create_enrollments_table.php",
+        "2026_01_01_000006_create_course_materials_table.php",
+      ),
+      sp(),
+      tip("Solo cambia los números del medio. El resto del nombre del archivo déjalo exactamente igual."),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 4
+      // ══════════════════════════════════════════
+      h1("Paso 4 — Llenar las migraciones"),
+      h2("Columnas más usadas"),
+      ...codes(
+        "$table->id();                                    // PK autoincremental",
+        "$table->string('nombre');                        // Texto corto (VARCHAR)",
+        "$table->text('descripcion');                     // Texto largo",
+        "$table->integer('creditos');                     // Número entero",
+        "$table->decimal('precio', 10, 2);               // Número con decimales",
+        "$table->date('fecha_inscripcion');               // Solo fecha",
+        "$table->timestamps();                            // created_at y updated_at",
+        "",
+        "// Clave foránea:",
+        "$table->foreignId('faculty_id')->constrained('faculties');",
+      ),
+      sp(),
+      tip("En PostgreSQL TODOS los nombres de columnas deben estar en minúscula. 'Actividad' con mayúscula causará error al hacer consultas. Usa siempre 'actividad'."),
+      tip("El nombre de la columna FK debe ser consistente en la migración, el modelo y el seeder. Si en la migración dices 'faculty_id', en todos lados debe ser 'faculty_id'."),
+      sp(),
+
+      h2("Ejemplo completo: tabla courses"),
+      ...codes(
+        "Schema::create('courses', function (Blueprint $table) {",
+        "    $table->id();",
+        "    $table->string('nombre');",
+        "    $table->integer('creditos');",
+        "    $table->foreignId('teacher_id')->constrained('teachers');",
+        "    $table->foreignId('faculty_id')->constrained('faculties');",
+        "    $table->timestamps();",
+        "});",
+      ),
+      sp(),
+
+      h2("Ejecutar las migraciones"),
+      ...codes(
+        "php artisan migrate              // Ejecuta migraciones pendientes",
+        "php artisan migrate:fresh        // Borra todo y vuelve a crear",
+      ),
+      sp(),
+      tip("migrate:fresh borra TODOS los datos. Úsalo solo en desarrollo."),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 5
+      // ══════════════════════════════════════════
+      h1("Paso 5 — Relaciones en los modelos"),
+      h2("La pregunta mágica"),
+      p("Para saber qué método usar, hazte siempre esta pregunta:"),
+      sp(),
+      new Paragraph({
+        spacing: { before: 100, after: 100 },
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: "¿Quién tiene la FK en la base de datos?", bold: true, size: 26, font: FONT, color: C1 })]
+      }),
+      sp(),
+      table(
+        ["Situación", "Método", "¿Quién lo escribe?"],
+        [
+          ["YO tengo la FK en mi tabla",       "belongsTo()",      "El modelo hijo"],
+          ["EL OTRO tiene la FK en su tabla",  "hasMany()",        "El modelo padre"],
+          ["Hay tabla intermedia",             "belongsToMany()",  "Ambos modelos"],
+        ],
+        [3200, 2400, 3760]
+      ),
+      sp(),
+      tip("Busca en TODAS las tablas del modelo quién tiene FK apuntando a tu tabla. Cada una de esas es un hasMany() que le falta a tu modelo padre."),
+      sp(),
+
+      h2("Ejemplo: Faculty (padre) y Teacher (hijo)"),
+      p("Teacher tiene ", {t:"faculty_id", b:true}, " → Teacher es el hijo → usa belongsTo. Faculty no tiene FK → usa hasMany."),
+      sp(),
+      ...codes(
+        "// Faculty.php — yo NO tengo FK, tengo muchos teachers",
+        "public function teachers()",
+        "{",
+        "    return $this->hasMany(Teacher::class, 'faculty_id');",
+        "}",
+        "",
+        "// Teacher.php — YO tengo la FK faculty_id",
+        "public function faculty()",
+        "{",
+        "    return $this->belongsTo(Faculty::class, 'faculty_id');",
+        "}",
+      ),
+      sp(),
+
+      h2("Ejemplo: muchos a muchos con tabla intermedia"),
+      p("Student y Course se relacionan a través de ", {t:"enrollments", b:true}, ". Ambos usan belongsToMany:"),
+      sp(),
+      ...codes(
+        "// Student.php",
+        "public function courses()",
+        "{",
+        "    return $this->belongsToMany(Course::class, 'enrollments');",
+        "}",
+        "",
+        "// Course.php",
+        "public function students()",
+        "{",
+        "    return $this->belongsToMany(Student::class, 'enrollments');",
+        "}",
+      ),
+      sp(),
+      ok("El modelo de la tabla intermedia (Enrollment) no necesita relaciones a menos que tenga columnas extra. Laravel la usa automáticamente."),
+      sp(),
+
+      h2("Importante: agregar los 'use' en cada modelo"),
+      p("Cuando un modelo referencia a otro, debes importarlo arriba con ", {t:"use", b:true}, ":"),
+      sp(),
+      ...codes(
+        "<?php",
+        "namespace App\\Models;",
+        "",
+        "use Illuminate\\Database\\Eloquent\\Model;",
+        "use App\\Models\\Faculty;   // ← importar los modelos que uses",
+        "use App\\Models\\Course;",
+        "",
+        "class Teacher extends Model",
+        "{",
+        "    // ...",
+        "}",
+      ),
+      sp(),
+      tip("Si olvidas el 'use App\\Models\\NombreModelo', Laravel lanzará error 'Class not found' aunque el modelo exista."),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 6
+      // ══════════════════════════════════════════
+      h1("Paso 6 — Scopes"),
+      h2("¿Para qué sirven?"),
+      p("Un scope es un filtro reutilizable. En vez de repetir el mismo ", {t:"where()", b:true}, " en varios controladores, lo defines una vez en el modelo y lo reutilizas."),
+      sp(),
+      ...codes(
+        "// ❌ Sin scope — repites el filtro en cada método del controlador",
+        "Teacher::where('faculty_id', 1)->get();",
+        "Teacher::where('faculty_id', 1)->count();",
+        "",
+        "// ✅ Con scope — defines una vez, usas en todos lados",
+        "Teacher::byFaculty(1)->get();",
+        "Teacher::byFaculty(1)->count();",
+      ),
+      sp(),
+
+      h2("Sintaxis de un scope"),
+      p("Siempre empieza con la palabra ", {t:"scope", b:true}, " seguida del nombre en PascalCase. El primer parámetro siempre es ", {t:"$query", b:true}, ":"),
+      sp(),
+      ...codes(
+        "// Scope sin parámetro (filtro fijo):",
+        "public function scopeActivos($query)",
+        "{",
+        "    return $query->where('activo', true);",
+        "}",
+        "",
+        "// Scope con parámetro (filtro flexible):",
+        "public function scopeByFaculty($query, $facultyId)",
+        "{",
+        "    return $query->where('faculty_id', $facultyId);",
+        "}",
+      ),
+      sp(),
+
+      h2("Cómo llamarlos"),
+      p("Al llamar el scope NO escribes 'scope', solo el nombre:"),
+      sp(),
+      ...codes(
+        "// Se llama sin 'scope':",
+        "Teacher::activos()->get();",
+        "Teacher::byFaculty(1)->get();",
+        "",
+        "// Puedes encadenarlos — se unen con AND automáticamente:",
+        "Teacher::byFaculty(1)->activos()->get();",
+      ),
+      sp(),
+      tip("El nombre de la columna en el scope debe coincidir exactamente con la columna en tu migración. Si pusiste 'faculty_id' en la migración, en el scope también debe ser 'faculty_id'."),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 7
+      // ══════════════════════════════════════════
+      h1("Paso 7 — Controladores"),
+      h2("Crear el controlador"),
+      ...codes("php artisan make:controller NombreController"),
+      sp(),
+
+      h2("Estructura del controlador"),
+      p("Importa el modelo con ", {t:"use", b:true}, " arriba, luego úsalo en cada método:"),
+      sp(),
+      ...codes(
+        "<?php",
+        "namespace App\\Http\\Controllers;",
+        "",
+        "use Illuminate\\Http\\Request;",
+        "use App\\Models\\Teacher;   // ← SIEMPRE importa el modelo",
+        "",
+        "class TeacherController extends Controller",
+        "{",
+        "    // Todos los registros",
+        "    public function index()",
+        "    {",
+        "        return response()->json(Teacher::all());",
+        "    }",
+        "",
+        "    // Usando un scope",
+        "    public function byFaculty($facultyId)",
+        "    {",
+        "        $teachers = Teacher::byFaculty($facultyId)->get();",
+        "        return response()->json($teachers);",
+        "    }",
+        "}",
+      ),
+      sp(),
+      tip("El error más frecuente en controladores es olvidar el 'use App\\Models\\NombreModelo'. Sin él, PHP no sabe de dónde viene el modelo y lanza error 500 en Postman."),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 8
+      // ══════════════════════════════════════════
+      h1("Paso 8 — Rutas de API"),
+      h2("Activar el archivo de rutas (solo Laravel 11)"),
+      p("En Laravel 11 el archivo ", {t:"routes/api.php", b:true}, " no viene por defecto. Debes activarlo:"),
+      sp(),
+      ...codes("php artisan install:api"),
+      sp(),
+
+      h2("Registrar las rutas"),
+      p("Abre ", {t:"routes/api.php", b:true}, " y agrega los 'use' de los controladores arriba, luego las rutas:"),
+      sp(),
+      ...codes(
+        "use App\\Http\\Controllers\\TeacherController;",
+        "use App\\Http\\Controllers\\CourseController;",
+        "",
+        "// Todas quedan bajo el prefijo /api/ automáticamente",
+        "Route::get('/teachers', [TeacherController::class, 'index']);",
+        "Route::get('/teachers/faculty/{facultyId}', [TeacherController::class, 'byFaculty']);",
+        "",
+        "Route::get('/courses', [CourseController::class, 'index']);",
+        "Route::get('/courses/teacher/{teacherId}', [CourseController::class, 'byTeacher']);",
+      ),
+      sp(),
+      tip("Si en la ruta dices 'byFaculty' pero en el controlador el método se llama 'byFacultad', Laravel lanzará error. El nombre debe ser idéntico."),
+      tip("Pon primero las rutas más específicas. Si tienes /teachers/{id} y /teachers/faculty/{id}, pon primero /teachers/faculty/{id} para que Laravel no las confunda."),
+      sp(),
+
+      h2("Verificar las rutas"),
+      p("Para confirmar que tus rutas están registradas correctamente:"),
+      sp(),
+      ...codes("php artisan route:list"),
+      sp(),
+      ok("Si ves error 'Class X does not exist' al correr route:list, revisa que el 'use' del controlador esté bien escrito en api.php."),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 9
+      // ══════════════════════════════════════════
+      h1("Paso 9 — Seeders"),
+      h2("¿Para qué sirven?"),
+      p("Un seeder inserta datos de prueba. Sin datos, Postman siempre devolverá arrays vacíos []."),
+      sp(),
+      ...codes("php artisan make:seeder NombreSeeder"),
+      sp(),
+
+      h2("Estructura del seeder"),
+      p("Crea los registros en el mismo orden que las migraciones: primero los padres, luego los hijos. Siempre guarda el resultado en una variable con ", {t:"$variable = Modelo::create()", b:true}, ":"),
+      sp(),
+      ...codes(
+        "<?php",
+        "namespace Database\\Seeders;",
+        "",
+        "use Illuminate\\Database\\Seeder;",
+        "use App\\Models\\Faculty;    // importa TODOS los modelos que uses",
+        "use App\\Models\\Teacher;",
+        "use App\\Models\\Course;",
+        "",
+        "class UniversitySeeder extends Seeder",
+        "{",
+        "    public function run(): void",
+        "    {",
+        "        // 1. Primero las tablas padre (sin FK)",
+        "        $faculty = Faculty::create([",
+        "            'nombre' => 'Ingeniería de Sistemas',",
+        "            'decano' => 'Dr. García',",
+        "        ]);",
+        "",
+        "        // 2. Luego las tablas hijo (con FK)",
+        "        $teacher = Teacher::create([",
+        "            'nombre'     => 'Ana',",
+        "            'apellido'   => 'Martínez',",
+        "            'faculty_id' => $faculty->id,  // usa el id del padre",
+        "        ]);",
+        "",
+        "        $course = Course::create([",
+        "            'nombre'     => 'Bases de Datos',",
+        "            'creditos'   => 3,",
+        "            'teacher_id' => $teacher->id,",
+        "            'faculty_id' => $faculty->id,",
+        "        ]);",
+        "    }",
+        "}",
+      ),
+      sp(),
+      tip("Siempre guarda cada create() en una variable ($faculty, $teacher, etc.) aunque creas que no la necesitarás. Si después la necesitas y no la guardaste, obtendrás error."),
+      tip("Los nombres de columna en el seeder deben coincidir exactamente con los de la migración, incluyendo mayúsculas/minúsculas."),
+      sp(),
+
+      h2("Ejecutar el seeder"),
+      ...codes(
+        "php artisan db:seed --class=NombreSeeder",
+        "",
+        "// O resetear todo y sembrar de una vez:",
+        "php artisan migrate:fresh --seed",
+      ),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // PASO 10
+      // ══════════════════════════════════════════
+      h1("Paso 10 — Probar en Postman"),
+      p("Con el servidor corriendo (", {t:"php artisan serve", b:true}, "), abre Postman y prueba cada ruta con método GET:"),
+      sp(),
+      table(
+        ["URL", "Qué devuelve"],
+        [
+          ["http://127.0.0.1:8000/api/teachers",            "Todos los profesores"],
+          ["http://127.0.0.1:8000/api/teachers/faculty/1",  "Profesores de la facultad 1"],
+          ["http://127.0.0.1:8000/api/courses",             "Todos los cursos"],
+          ["http://127.0.0.1:8000/api/courses/teacher/1",   "Cursos del profesor 1"],
+        ],
+        [5760, 3600]
+      ),
+      sp(),
+      table(
+        ["Resultado", "Causa probable", "Solución"],
+        [
+          ["[] array vacío",      "No hay datos en la BD",           "Correr el seeder"],
+          ["500 Internal Error",  "Error en el código PHP",          "Revisar la terminal del servidor"],
+          ["404 Not Found",       "Ruta no registrada o URL mal",    "Revisar routes/api.php"],
+          ["Class not found",     "Falta el 'use' del modelo",       "Agregar use App\\Models\\Nombre"],
+        ],
+        [2400, 3600, 3360]
+      ),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // ERRORES FRECUENTES
+      // ══════════════════════════════════════════
+      h1("Errores frecuentes — Resumen"),
+      sp(),
+      table(
+        ["Error", "Por qué pasa", "Cómo solucionarlo"],
+        [
+          [
+            "vendor/autoload.php not found",
+            "La carpeta vendor no se generó",
+            "Ejecutar: composer install"
+          ],
+          [
+            "No existe la relación X (PostgreSQL)",
+            "La migración se corrió antes que su tabla padre",
+            "Renombrar archivos con orden numérico"
+          ],
+          [
+            "No existe la columna X",
+            "Nombre diferente entre migración, modelo y seeder",
+            "Verificar que el nombre sea idéntico en los tres"
+          ],
+          [
+            "Class 'App\\Models\\X' not found",
+            "Falta el 'use App\\Models\\X' en el archivo",
+            "Agregar el use correspondiente"
+          ],
+          [
+            "Error 500 en Postman",
+            "Error PHP en el controlador o modelo",
+            "Revisar la terminal donde corre artisan serve"
+          ],
+          [
+            "Respuesta [] vacía",
+            "No hay datos o el filtro no coincide",
+            "Correr el seeder y verificar los valores"
+          ],
+          [
+            "Nombre de columna con mayúscula (PostgreSQL)",
+            "PostgreSQL es sensible a mayúsculas",
+            "Usar siempre minúsculas en nombres de columnas"
+          ],
+          [
+            "Modelos con minúscula (teacher.php)",
+            "Va contra las convenciones de Laravel",
+            "Renombrar a PascalCase (Teacher.php)"
+          ],
+        ],
+        [2900, 3200, 3260]
+      ),
+      sp(),
+
+      pb(),
+
+      // ══════════════════════════════════════════
+      // CHECKLIST
+      // ══════════════════════════════════════════
+      h1("Checklist para cada proyecto"),
+      p("Úsalo como guía en cada examen o proyecto:"),
+      sp(),
+      num("Leer el modelo e identificar tablas padre, hijo e intermedias"),
+      num("Definir el orden correcto de las migraciones"),
+      num("composer create-project laravel/laravel nombre-proyecto"),
+      num("Configurar .env con los datos de PostgreSQL"),
+      num("Crear la BD en pgAdmin con el mismo nombre del .env"),
+      num("php artisan make:model Nombre -m (por cada tabla)"),
+      num("Renombrar archivos de migración con números secuenciales"),
+      num("Llenar cada migración (columnas en minúscula, FK con constrained)"),
+      num("php artisan migrate:fresh"),
+      num("Agregar relaciones en cada modelo (belongsTo, hasMany, belongsToMany)"),
+      num("Agregar 'use App\\Models\\X' en cada modelo que lo necesite"),
+      num("Agregar Scopes en los modelos"),
+      num("php artisan make:controller NombreController (por cada controlador)"),
+      num("Agregar 'use App\\Models\\X' en cada controlador"),
+      num("Llenar los métodos del controlador usando los scopes"),
+      num("php artisan install:api (solo si no existe routes/api.php)"),
+      num("Registrar las rutas en routes/api.php con sus 'use'"),
+      num("php artisan route:list (verificar que las rutas existan)"),
+      num("php artisan make:seeder NombreSeeder"),
+      num("Llenar el seeder en orden (padres primero, hijos después)"),
+      num("php artisan db:seed --class=NombreSeeder"),
+      num("Probar todas las rutas en Postman"),
+      sp(),
+      ok("Sigue siempre este orden. El 90% de los errores vienen de saltarse un paso o de inconsistencias en los nombres de columnas."),
+      sp(),
+
+    ]
+  }]
+});
+
+Packer.toBuffer(doc).then(buf => {
+  fs.writeFileSync('/mnt/user-data/outputs/Tutorial_Laravel_Completo.docx', buf);
+  console.log('Listo!');
+});
